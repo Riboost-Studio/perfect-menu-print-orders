@@ -2,14 +2,25 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
 )
 
-// detectLocalIP tries to find your main IPv4 address (non-loopback)
+type Printer struct {
+	IP   string `json:"ip"`
+	Port int    `json:"port"`
+}
+
+const printersFile = "printers.json"
+
+// --- Detect local IPv4 ---
 func detectLocalIP() (string, error) {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
@@ -23,7 +34,7 @@ func detectLocalIP() (string, error) {
 	return "", fmt.Errorf("no local IPv4 address found")
 }
 
-// probe returns true if the port is open
+// --- Probe a TCP port ---
 func probe(ip string, port int) bool {
 	addr := fmt.Sprintf("%s:%d", ip, port)
 	conn, err := net.DialTimeout("tcp", addr, 300*time.Millisecond)
@@ -34,39 +45,75 @@ func probe(ip string, port int) bool {
 	return true
 }
 
-func main() {
+// --- Send raw print job (JetDirect) ---
+func sendRaw(printer Printer, filePath string) error {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", printer.IP, printer.Port), 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = io.Copy(conn, f)
+	return err
+}
+
+// --- Load printers from JSON ---
+func loadPrinters() ([]Printer, error) {
+	data, err := os.ReadFile(printersFile)
+	if err != nil {
+		return nil, err
+	}
+	var printers []Printer
+	err = json.Unmarshal(data, &printers)
+	return printers, err
+}
+
+// --- Save printers to JSON ---
+func savePrinters(printers []Printer) error {
+	data, err := json.MarshalIndent(printers, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(printersFile, data, 0644)
+}
+
+// --- Scan network for printers ---
+func discoverPrinters() []Printer {
 	localIP, err := detectLocalIP()
 	if err != nil {
-		panic(err)
+		fmt.Println("Error:", err)
+		return nil
 	}
-	fmt.Println("Local IP:", localIP)
-
-	// assume /24 subnet
 	parts := strings.Split(localIP, ".")
 	if len(parts) != 4 {
-		panic("unexpected IP format")
+		fmt.Println("Unexpected IP format")
+		return nil
 	}
 	subnet := strings.Join(parts[:3], ".")
 	fmt.Println("Scanning subnet:", subnet+".0/24")
 
 	var wg sync.WaitGroup
 	ipChan := make(chan string, 256)
-	printers := make(chan string, 256)
+	foundChan := make(chan string, 256)
 
-	// worker goroutines
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for ip := range ipChan {
-				if probe(ip, 631) || probe(ip, 9100) || probe(ip, 515) {
-					printers <- ip
+				if probe(ip, 9100) {
+					foundChan <- ip
 				}
 			}
 		}()
 	}
 
-	// enqueue IPs
 	for i := 1; i <= 254; i++ {
 		ip := fmt.Sprintf("%s.%d", subnet, i)
 		if ip != localIP {
@@ -77,18 +124,60 @@ func main() {
 
 	go func() {
 		wg.Wait()
-		close(printers)
+		close(foundChan)
 	}()
 
-	fmt.Println("Scanning... please wait (a few seconds)")
-	found := false
-	for ip := range printers {
-		fmt.Printf("Possible printer found at %s\n", ip)
-		found = true
+	var printers []Printer
+	reader := bufio.NewReader(os.Stdin)
+	for ip := range foundChan {
+		fmt.Printf("Printer found at %s. Add it? (y/n): ", ip)
+		answer, _ := reader.ReadString('\n')
+		if strings.HasPrefix(strings.ToLower(answer), "y") {
+			printers = append(printers, Printer{IP: ip, Port: 9100})
+		}
 	}
 
-	if !found {
-		fmt.Println("No printers detected.")
+	return printers
+}
+
+func main() {
+	var printers []Printer
+	var err error
+
+	if _, err = os.Stat(printersFile); err == nil {
+		printers, err = loadPrinters()
+		if err == nil && len(printers) > 0 {
+			fmt.Println("Loaded saved printers:")
+			for _, p := range printers {
+				fmt.Printf("- %s:%d\n", p.IP, p.Port)
+			}
+		}
 	}
-	fmt.Println("Done.")
+
+	if len(printers) == 0 {
+		printers = discoverPrinters()
+		if len(printers) > 0 {
+			savePrinters(printers)
+			fmt.Println("Printers saved to", printersFile)
+		} else {
+			fmt.Println("No printers saved.")
+			return
+		}
+	}
+
+	// Ask file to print
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Enter file path to send to all printers: ")
+	filePath, _ := reader.ReadString('\n')
+	filePath = strings.TrimSpace(filePath)
+
+	for _, p := range printers {
+		fmt.Printf("Sending file to %s:%d...\n", p.IP, p.Port)
+		err := sendRaw(p, filePath)
+		if err != nil {
+			fmt.Println("  ❌ Error:", err)
+		} else {
+			fmt.Println("  ✅ Sent successfully.")
+		}
+	}
 }

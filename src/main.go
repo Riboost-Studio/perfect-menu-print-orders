@@ -1,80 +1,94 @@
+// main.go
 package main
 
 import (
 	"fmt"
-	"os"
-	"gopkg.in/yaml.v2"
 	"net"
+	"strings"
+	"sync"
 	"time"
 )
 
-// Printer represents a printer's basic info
- type Printer struct {
-	Name string `yaml:"name"`
-	IP   string `yaml:"ip"`
-}
-
-// Config holds all discovered printers
- type Config struct {
-	Printers []Printer `yaml:"printers"`
-}
-
-const configFile = "printers.yaml"
-
-// scanNetwork tries to find printers on the local network (basic TCP port scan for 9100)
-func scanNetwork() []Printer {
-	printers := []Printer{}
-	// Scan common local IP range (192.168.1.1-254)
-	for i := 1; i <= 254; i++ {
-		ip := fmt.Sprintf("192.168.1.%d", i)
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:9100", ip), 500*time.Millisecond)
-		if err == nil {
-			printers = append(printers, Printer{Name: fmt.Sprintf("Printer-%d", i), IP: ip})
-			conn.Close()
+// detectLocalIP tries to find your main IPv4 address (non-loopback)
+func detectLocalIP() (string, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "", err
+	}
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+			return ipnet.IP.String(), nil
 		}
 	}
-	return printers
+	return "", fmt.Errorf("no local IPv4 address found")
+}
+
+// probe returns true if the port is open
+func probe(ip string, port int) bool {
+	addr := fmt.Sprintf("%s:%d", ip, port)
+	conn, err := net.DialTimeout("tcp", addr, 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func main() {
-	var cfg Config
-	if _, err := os.Stat(configFile); err == nil {
-		// Config file exists, read printers from it
-		f, err := os.ReadFile(configFile)
-		if err != nil {
-			fmt.Println("Error reading config file:", err)
-			return
-		}
-		if err := yaml.Unmarshal(f, &cfg); err != nil {
-			fmt.Println("Error parsing YAML:", err)
-			return
-		}
-		fmt.Println("Printers loaded from config:")
-		for _, p := range cfg.Printers {
-			fmt.Printf("%s (%s)\n", p.Name, p.IP)
-		}
-		return
+	localIP, err := detectLocalIP()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("Local IP:", localIP)
+
+	// assume /24 subnet
+	parts := strings.Split(localIP, ".")
+	if len(parts) != 4 {
+		panic("unexpected IP format")
+	}
+	subnet := strings.Join(parts[:3], ".")
+	fmt.Println("Scanning subnet:", subnet+".0/24")
+
+	var wg sync.WaitGroup
+	ipChan := make(chan string, 256)
+	printers := make(chan string, 256)
+
+	// worker goroutines
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ip := range ipChan {
+				if probe(ip, 631) || probe(ip, 9100) || probe(ip, 515) {
+					printers <- ip
+				}
+			}
+		}()
 	}
 
-	// Config file does not exist, scan network
-	fmt.Println("Scanning network for printers...")
-	cfg.Printers = scanNetwork()
-	if len(cfg.Printers) == 0 {
-		fmt.Println("No printers found.")
-		return
+	// enqueue IPs
+	for i := 1; i <= 254; i++ {
+		ip := fmt.Sprintf("%s.%d", subnet, i)
+		if ip != localIP {
+			ipChan <- ip
+		}
 	}
-	// Save to YAML
-	data, err := yaml.Marshal(&cfg)
-	if err != nil {
-		fmt.Println("Error marshaling YAML:", err)
-		return
+	close(ipChan)
+
+	go func() {
+		wg.Wait()
+		close(printers)
+	}()
+
+	fmt.Println("Scanning... please wait (a few seconds)")
+	found := false
+	for ip := range printers {
+		fmt.Printf("Possible printer found at %s\n", ip)
+		found = true
 	}
-	if err := os.WriteFile(configFile, data, 0644); err != nil {
-		fmt.Println("Error writing config file:", err)
-		return
+
+	if !found {
+		fmt.Println("No printers detected.")
 	}
-	fmt.Println("Printers found and saved:")
-	for _, p := range cfg.Printers {
-		fmt.Printf("%s (%s)\n", p.Name, p.IP)
-	}
+	fmt.Println("Done.")
 }

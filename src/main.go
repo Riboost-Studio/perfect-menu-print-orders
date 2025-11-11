@@ -21,17 +21,38 @@ type Printer struct {
 const printersFile = "printers.json"
 
 // --- Detect local IPv4 ---
-func detectLocalIP() (string, error) {
+func detectLocalNet() (*net.IPNet, net.IP, error) {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
 	for _, a := range addrs {
 		if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-			return ipnet.IP.String(), nil
+			return ipnet, ipnet.IP, nil
 		}
 	}
-	return "", fmt.Errorf("no local IPv4 address found")
+	return nil, nil, fmt.Errorf("no local IPv4 address found")
+}
+
+func hosts(cidr *net.IPNet) []string {
+	var ips []string
+	for ip := cidr.IP.Mask(cidr.Mask); cidr.Contains(ip); inc(ip) {
+		ips = append(ips, ip.String())
+	}
+	// Remove network and broadcast addresses
+	if len(ips) > 2 {
+		return ips[1 : len(ips)-1]
+	}
+	return []string{}
+}
+
+func inc(ip net.IP) {
+	for j := len(ip) - 1; j >= 0; j-- {
+		ip[j]++
+		if ip[j] > 0 {
+			break
+		}
+	}
 }
 
 // --- Probe a TCP port ---
@@ -85,42 +106,38 @@ func savePrinters(printers []Printer) error {
 
 // --- Scan network for printers ---
 func discoverPrinters() []Printer {
-	localIP, err := detectLocalIP()
+	ipnet, localIP, err := detectLocalNet()
 	if err != nil {
 		fmt.Println("Error:", err)
 		return nil
 	}
-	parts := strings.Split(localIP, ".")
-	if len(parts) != 4 {
-		fmt.Println("Unexpected IP format")
-		return nil
-	}
-	subnet := strings.Join(parts[:3], ".")
-	fmt.Println("Scanning subnet:", subnet+".0/24")
+	fmt.Printf("Scanning subnet: %s (%s)\n", ipnet.String(), localIP.String())
+
+	allIPs := hosts(ipnet)
+	fmt.Printf("Found %d addresses to probe.\n", len(allIPs))
 
 	var wg sync.WaitGroup
 	ipChan := make(chan string, 256)
 	foundChan := make(chan string, 256)
 
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 100; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for ip := range ipChan {
-				if probe(ip, 9100) {
+				if ip != localIP.String() && probe(ip, 9100) {
 					foundChan <- ip
 				}
 			}
 		}()
 	}
 
-	for i := 1; i <= 254; i++ {
-		ip := fmt.Sprintf("%s.%d", subnet, i)
-		if ip != localIP {
+	go func() {
+		for _, ip := range allIPs {
 			ipChan <- ip
 		}
-	}
-	close(ipChan)
+		close(ipChan)
+	}()
 
 	go func() {
 		wg.Wait()

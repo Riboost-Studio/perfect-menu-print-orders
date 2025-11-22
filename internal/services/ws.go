@@ -38,7 +38,7 @@ func RunAgent(ctx context.Context, p model.Printer, config model.Config) {
 		}
 
 		log.Printf("[%s] Connected.", p.Name)
-		handleConnection(conn, p)
+		handleConnection(ctx, conn, p)
 
 		conn.Close()
 		log.Printf("[%s] Disconnected. Reconnecting in 5s...", p.Name)
@@ -46,9 +46,9 @@ func RunAgent(ctx context.Context, p model.Printer, config model.Config) {
 	}
 }
 
-func handleConnection(conn *websocket.Conn, p model.Printer) {
+func handleConnection(ctx context.Context, conn *websocket.Conn, p model.Printer) {
 	regMsg := model.WSMessage{
-		Type:     "register",
+		Type:     model.MessageTypeRegister,
 		AgentKey: p.AgentKey,
 	}
 	if err := conn.WriteJSON(regMsg); err != nil {
@@ -65,19 +65,19 @@ func handleConnection(conn *websocket.Conn, p model.Printer) {
 		}
 
 		switch msg.Type {
-		case "registered":
+		case model.MessageTypeRegistered:
 			log.Printf("[%s] Successfully registered with server.", p.Name)
 
-		case "ping":
+		case model.MessageTypePing:
 			log.Printf("[%s] Received ping, sending pong...", p.Name)
-			conn.WriteJSON(model.WSMessage{Type: "pong", AgentKey: p.AgentKey})
+			conn.WriteJSON(model.WSMessage{Type: model.MessageTypePong, AgentKey: p.AgentKey})
 
-		case "print_order":
+		case model.MessageTypeNewOrder:
 			log.Printf("[%s] Received print order...", p.Name)
 			// Pass the raw JSON to be parsed specifically
-			handlePrintJob(conn, p, msg.Order)
+			handlePrintJob(ctx, conn, p, msg.Order)
 
-		case "unregister":
+		case model.MessageTypeUnregister:
 			log.Printf("[%s] Server requested unregister.", p.Name)
 			return
 
@@ -87,7 +87,7 @@ func handleConnection(conn *websocket.Conn, p model.Printer) {
 	}
 }
 
-func handlePrintJob(conn *websocket.Conn, p model.Printer, rawOrder json.RawMessage) {
+func handlePrintJob(ctx context.Context, conn *websocket.Conn, p model.Printer, rawOrder json.RawMessage) {
 	// 1. Parse the specific JSON structure
 	var payload model.OrderPayload
 	if err := json.Unmarshal(rawOrder, &payload); err != nil {
@@ -111,8 +111,8 @@ func handlePrintJob(conn *websocket.Conn, p model.Printer, rawOrder json.RawMess
 		log.Printf("[%s] Processing Order #%d for Table %s", p.Name, order.ID, order.Table.Number)
 
 		// 2. Generate PDF
-		pdfPath := filepath.Join(tmpDir, fmt.Sprintf("order_%d.pdf", order.ID))
-		err := generateOrderPDF(order, pdfPath)
+		pdfPath := filepath.Join(tmpDir, fmt.Sprintf("%s_order_%d.pdf", p.AgentKey, order.ID))
+		err := generateOrderPDF(ctx, order, pdfPath)
 		if err != nil {
 			log.Printf("[%s] Failed to generate PDF: %v", p.Name, err)
 			continue
@@ -122,9 +122,17 @@ func handlePrintJob(conn *websocket.Conn, p model.Printer, rawOrder json.RawMess
 		// 3. Send PDF to Printer
 		if err := sendFileToPrinter(p, pdfPath); err != nil {
 			log.Printf("[%s] Failed to send to printer: %v", p.Name, err)
+			regMsg := model.WSMessage{
+				Type:     model.MessageTypePrintFailed,
+				AgentKey: p.AgentKey,
+				Error:    err.Error(),
+			}
+			if err := conn.WriteJSON(regMsg); err != nil {
+				log.Printf("[%s] Failed to send print_failed: %v", p.Name, err)
+			}
 		} else {
 			regMsg := model.WSMessage{
-				Type:     "printed",
+				Type:     model.MessageTypePrinted,
 				AgentKey: p.AgentKey,
 			}
 			if err := conn.WriteJSON(regMsg); err != nil {
@@ -134,77 +142,14 @@ func handlePrintJob(conn *websocket.Conn, p model.Printer, rawOrder json.RawMess
 			log.Printf("[%s] Order sent successfully!", p.Name)
 
 			// 4. Cleanup (Commented out as requested)
-			// if err := os.Remove(pdfPath); err != nil {
-			// 	log.Printf("[%s] Warning: Failed to delete tmp file: %v", p.Name, err)
-			// } else {
-			// 	log.Printf("[%s] Tmp file deleted.", p.Name)
-			// }
+			if err := os.Remove(pdfPath); err != nil {
+				log.Printf("[%s] Warning: Failed to delete tmp file: %v", p.Name, err)
+			} else {
+				log.Printf("[%s] Tmp file deleted.", p.Name)
+			}
 		}
 	}
 }
-
-// func generateOrderPDF(order model.Order, outputPath string) error {
-// 	pdf := gofpdf.New("P", "mm", "A4", "")
-// 	pdf.AddPage()
-// 	pdf.SetFont("Arial", "B", 16)
-
-// 	// Header
-// 	pdf.Cell(40, 10, order.Restaurant.Name)
-// 	pdf.Ln(10)
-// 	pdf.SetFont("Arial", "", 12)
-// 	pdf.Cell(40, 10, fmt.Sprintf("Order #%d", order.ID))
-// 	pdf.Ln(6)
-// 	pdf.Cell(40, 10, fmt.Sprintf("Table: %s", order.Table.Number))
-// 	pdf.Ln(6)
-// 	pdf.Cell(40, 10, fmt.Sprintf("Time: %s", order.CreatedAt))
-// 	pdf.Ln(10)
-
-// 	// Separator
-// 	pdf.Cell(40, 10, "------------------------------------------------")
-// 	pdf.Ln(10)
-
-// 	// Plates
-// 	pdf.SetFont("Arial", "B", 12)
-// 	if len(order.Plates) > 0 {
-// 		pdf.Cell(40, 10, "Food:")
-// 		pdf.Ln(8)
-// 		pdf.SetFont("Arial", "", 12)
-// 		for _, item := range order.Plates {
-// 			line := fmt.Sprintf("%dx %s", item.Quantity, item.Plate.Name)
-// 			pdf.Cell(40, 10, line)
-// 			pdf.Ln(6)
-// 		}
-// 		pdf.Ln(4)
-// 	}
-
-// 	// Drinks
-// 	if len(order.Drinks) > 0 {
-// 		pdf.SetFont("Arial", "B", 12)
-// 		pdf.Cell(40, 10, "Drinks:")
-// 		pdf.Ln(8)
-// 		pdf.SetFont("Arial", "", 12)
-// 		for _, item := range order.Drinks {
-// 			line := fmt.Sprintf("%dx %s", item.Quantity, item.Drink.Name)
-// 			pdf.Cell(40, 10, line)
-// 			pdf.Ln(6)
-// 		}
-// 		pdf.Ln(4)
-// 	}
-
-// 	// Notes
-// 	if order.Notes != nil && *order.Notes != "" {
-// 		pdf.Ln(4)
-// 		pdf.SetFont("Arial", "I", 11)
-// 		pdf.Cell(40, 10, fmt.Sprintf("Notes: %s", *order.Notes))
-// 		pdf.Ln(10)
-// 	}
-
-// 	// Total
-// 	pdf.SetFont("Arial", "B", 14)
-// 	pdf.Cell(40, 10, fmt.Sprintf("Total: %.2f", order.TotalAmount))
-
-// 	return pdf.OutputFileAndClose(outputPath)
-// }
 
 // Define Helper functions for the template (formatting strings to money, dates, etc)
 var templateFuncs = template.FuncMap{
@@ -228,15 +173,16 @@ var templateFuncs = template.FuncMap{
 	},
 }
 
-func generateOrderPDF(order model.Order, outputPath string) error {
+func generateOrderPDF(ctx context.Context, order model.Order, outputPath string) error {
 	// 1. Create a buffer to store the generated HTML
 	var htmlBuffer bytes.Buffer
 
 	// 2. Parse the HTML template
-	// Assumes the HTML file is at ./templates/order.html
-	tmplPath := filepath.Join("templates", "order.html")
+	templatePath := ctx.Value(model.TemplatePath).(string)
+	templateFile := ctx.Value(model.TemplateFile).(string)
+	tmplPath := filepath.Join(templatePath, templateFile)
 	
-	tmpl, err := template.New("order.html").Funcs(templateFuncs).ParseFiles(tmplPath)
+	tmpl, err := template.New(templateFile).Funcs(templateFuncs).ParseFiles(tmplPath)
 	if err != nil {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}

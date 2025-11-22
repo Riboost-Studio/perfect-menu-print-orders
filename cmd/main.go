@@ -33,6 +33,8 @@ func main() {
 	ctx = context.WithValue(ctx, model.ContextAppAuthor, "Riboost Studio")
 	ctx = context.WithValue(ctx, model.ContextConfigFile, configFile)
 	ctx = context.WithValue(ctx, model.ContextPrintersFile, printersFile)
+	ctx = context.WithValue(ctx, model.TemplatePath, "templates")
+	ctx = context.WithValue(ctx, model.TemplateFile, "order.html")
 
 	// 1. Load Configuration
 	config, err := utils.LoadOrSetupConfig(ctx)

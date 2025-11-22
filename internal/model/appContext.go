@@ -3,11 +3,13 @@ package model
 type contextKey string
 
 const (
-	ContextAppName  contextKey = "appName"
-	ContextAppVersion contextKey = "appVersion"
-	ContextAppAuthor contextKey = "appAuthor"
-	ContextConfigFile contextKey = "configFile"
+	ContextAppName      contextKey = "appName"
+	ContextAppVersion   contextKey = "appVersion"
+	ContextAppAuthor    contextKey = "appAuthor"
+	ContextConfigFile   contextKey = "configFile"
 	ContextPrintersFile contextKey = "printersFile"
-	ContextAPIURL contextKey = "apiURL"
-	ContextWSURL contextKey = "wsURL"
+	ContextAPIURL       contextKey = "apiURL"
+	ContextWSURL        contextKey = "wsURL"
+	TemplatePath        contextKey = "templatePath"
+	TemplateFile        contextKey = "templateFile"
 )

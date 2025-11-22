@@ -188,10 +188,10 @@ func generateOrderPDF(order model.Order, outputPath string) error {
 	}
 
 	// Notes
-	if order.Notes != "" {
+	if order.Notes != nil && *order.Notes != "" {
 		pdf.Ln(4)
 		pdf.SetFont("Arial", "I", 11)
-		pdf.Cell(40, 10, fmt.Sprintf("Notes: %s", order.Notes))
+		pdf.Cell(40, 10, fmt.Sprintf("Notes: %s", *order.Notes))
 		pdf.Ln(10)
 	}
 

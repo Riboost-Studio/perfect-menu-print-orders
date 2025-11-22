@@ -2,4 +2,4 @@
 
 ## TODO
 
-- [ ] Validate Printers are not already registered
+- [ ] Validate with a GET requests the printers with IP and get the agent key

@@ -10,10 +10,10 @@ import (
 
 // SystemInfo holds information about the current system
 type SystemInfo struct {
-	OS                 string
-	Architecture       string
-	WkhtmltopdfPresent bool
-	WkhtmltopdfPath    string
+	OS              string
+	Architecture    string
+	ChromePresent   bool
+	ChromePath      string
 }
 
 // DetectSystem returns information about the current operating system and architecture
@@ -24,17 +24,29 @@ func DetectSystem() SystemInfo {
 	}
 }
 
-// CheckWkhtmltopdf checks if wkhtmltopdf is installed and available in the system
-func CheckWkhtmltopdf() (bool, string) {
-	// Try to find wkhtmltopdf in PATH
-	path, err := exec.LookPath("wkhtmltopdf")
-	if err == nil {
-		return true, path
+// --------------------------------------
+// CHROME CHECK
+// --------------------------------------
+
+// CheckChrome checks if google-chrome or chromium is installed
+func CheckChrome() (bool, string) {
+	// Try common binary names
+	binaries := []string{
+		"google-chrome",
+		"google-chrome-stable",
+		"chromium",
+		"chromium-browser",
 	}
 
-	// Check common installation paths for different OS
-	commonPaths := getCommonWkhtmltopdfPaths()
-	for _, path := range commonPaths {
+	for _, bin := range binaries {
+		path, err := exec.LookPath(bin)
+		if err == nil {
+			return true, path
+		}
+	}
+
+	// Check common installation paths
+	for _, path := range getCommonChromePaths() {
 		if _, err := os.Stat(path); err == nil {
 			return true, path
 		}
@@ -43,128 +55,121 @@ func CheckWkhtmltopdf() (bool, string) {
 	return false, ""
 }
 
-// getCommonWkhtmltopdfPaths returns common installation paths for wkhtmltopdf based on OS
-func getCommonWkhtmltopdfPaths() []string {
+// getCommonChromePaths returns common Chrome/Chromium installation paths
+func getCommonChromePaths() []string {
 	switch runtime.GOOS {
-	case "windows":
-		return []string{
-			"C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe",
-			"C:\\Program Files (x86)\\wkhtmltopdf\\bin\\wkhtmltopdf.exe",
-		}
 	case "darwin": // macOS
 		return []string{
-			"/usr/local/bin/wkhtmltopdf",
-			"/opt/homebrew/bin/wkhtmltopdf",
-			"/Applications/wkhtmltopdf.app/Contents/MacOS/wkhtmltopdf",
+			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			"/Applications/Chromium.app/Contents/MacOS/Chromium",
 		}
+
 	case "linux":
 		return []string{
-			"/usr/bin/wkhtmltopdf",
-			"/usr/local/bin/wkhtmltopdf",
-			"/opt/wkhtmltopdf/bin/wkhtmltopdf",
+			"/usr/bin/google-chrome",
+			"/usr/bin/google-chrome-stable",
+			"/usr/bin/chromium",
+			"/usr/bin/chromium-browser",
+			"/snap/bin/chromium",
 		}
+
+	case "windows":
+		return []string{
+			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
+			`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
+			`C:\Program Files\Chromium\Application\chromium.exe`,
+			`C:\Program Files (x86)\Chromium\Application\chromium.exe`,
+		}
+
 	default:
-		return []string{"/usr/bin/wkhtmltopdf", "/usr/local/bin/wkhtmltopdf"}
+		return []string{}
 	}
 }
 
-// ValidateSystemRequirements checks system requirements and provides installation guidance
+// --------------------------------------
+// VALIDATION
+// --------------------------------------
+
 func ValidateSystemRequirements() error {
 	sysInfo := DetectSystem()
+
 	fmt.Printf("System Information:\n")
 	fmt.Printf("  OS: %s\n", sysInfo.OS)
 	fmt.Printf("  Architecture: %s\n", sysInfo.Architecture)
 	fmt.Println()
 
-	// Check for wkhtmltopdf
-	isPresent, path := CheckWkhtmltopdf()
-	sysInfo.WkhtmltopdfPresent = isPresent
-	sysInfo.WkhtmltopdfPath = path
+	// Check for Chrome/Chromium
+	isPresent, path := CheckChrome()
+	sysInfo.ChromePresent = isPresent
+	sysInfo.ChromePath = path
 
 	if isPresent {
-		fmt.Printf("✓ wkhtmltopdf found at: %s\n", path)
-
-		// Test wkhtmltopdf version
-		if version := getWkhtmltopdfVersion(path); version != "" {
-			fmt.Printf("  Version: %s\n", version)
-		}
-
-		fmt.Println()
+		fmt.Printf("✓ Chrome/Chromium found at: %s\n", path)
+		fmt.Printf("  Version: %s\n\n", getChromeVersion(path))
 		return nil
 	}
 
-	// wkhtmltopdf not found - provide installation instructions
-	fmt.Println("✗ wkhtmltopdf not found!")
-	fmt.Println("  wkhtmltopdf is required to generate PDF receipts from HTML templates.")
+	// Chrome not found
+	fmt.Println("✗ Chrome / Chromium not found!")
+	fmt.Println("  It is required for PDF generation using headless Chrome.")
 	fmt.Println()
 
-	showInstallationInstructions(sysInfo.OS)
+	showChromeInstallationInstructions(sysInfo.OS)
 
-	return fmt.Errorf("wkhtmltopdf is required but not installed")
+	return fmt.Errorf("chrome/chromium is required but not installed")
 }
 
-// getWkhtmltopdfVersion attempts to get the version of wkhtmltopdf
-func getWkhtmltopdfVersion(path string) string {
+// getChromeVersion attempts to get the version of Chrome/Chromium
+func getChromeVersion(path string) string {
 	cmd := exec.Command(path, "--version")
 	output, err := cmd.Output()
 	if err != nil {
-		return ""
+		return "unknown"
 	}
-
 	version := strings.TrimSpace(string(output))
-	// Extract just the version number (first line usually contains it)
-	lines := strings.Split(version, "\n")
-	if len(lines) > 0 {
-		return strings.TrimSpace(lines[0])
-	}
-
 	return version
 }
 
-// showInstallationInstructions displays OS-specific installation instructions
-func showInstallationInstructions(osType string) {
-	fmt.Println("Installation Instructions:")
-	fmt.Println()
+// --------------------------------------
+// INSTALLATION INSTRUCTIONS
+// --------------------------------------
+
+func showChromeInstallationInstructions(osType string) {
+	fmt.Println("Installation Instructions:\n")
 
 	switch osType {
+
 	case "linux":
-		fmt.Println("Ubuntu/Debian:")
+		fmt.Println("Ubuntu / Debian:")
 		fmt.Println("  sudo apt update")
-		fmt.Println("  sudo apt install wkhtmltopdf")
+		fmt.Println("  sudo apt install chromium-browser")
 		fmt.Println()
-		fmt.Println("CentOS/RHEL/Fedora:")
-		fmt.Println("  sudo yum install wkhtmltopdf")
-		fmt.Println("  # or for newer versions:")
-		fmt.Println("  sudo dnf install wkhtmltopdf")
+		fmt.Println("Fedora:")
+		fmt.Println("  sudo dnf install chromium")
 		fmt.Println()
-		fmt.Println("Arch Linux:")
-		fmt.Println("  sudo pacman -S wkhtmltopdf")
+		fmt.Println("Arch:")
+		fmt.Println("  sudo pacman -S chromium")
 		fmt.Println()
-		fmt.Println("Manual installation:")
-		fmt.Println("  Download from: https://wkhtmltopdf.org/downloads.html")
+		fmt.Println("Google Chrome:")
+		fmt.Println("  https://www.google.com/chrome/")
 
 	case "darwin": // macOS
-		fmt.Println("Using Homebrew (recommended):")
-		fmt.Println("  brew install wkhtmltopdf")
+		fmt.Println("Using Homebrew:")
+		fmt.Println("  brew install --cask google-chrome")
 		fmt.Println()
-		fmt.Println("Using MacPorts:")
-		fmt.Println("  sudo port install wkhtmltopdf")
-		fmt.Println()
-		fmt.Println("Manual installation:")
-		fmt.Println("  Download from: https://wkhtmltopdf.org/downloads.html")
+		fmt.Println("Or Chromium:")
+		fmt.Println("  brew install chromium")
 
 	case "windows":
-		fmt.Println("Download and install from:")
-		fmt.Println("  https://wkhtmltopdf.org/downloads.html")
+		fmt.Println("Download Google Chrome:")
+		fmt.Println("  https://www.google.com/chrome/")
 		fmt.Println()
-		fmt.Println("Choose the Windows installer and follow the setup wizard.")
-		fmt.Println("Make sure to add wkhtmltopdf to your system PATH.")
+		fmt.Println("Or install Chromium manually.")
 
 	default:
-		fmt.Println("Please visit https://wkhtmltopdf.org/downloads.html")
-		fmt.Println("and download the appropriate package for your operating system.")
+		fmt.Println("Please install Chrome or Chromium for your OS.")
 	}
 
 	fmt.Println()
-	fmt.Println("After installation, restart this application to continue.")
+	fmt.Println("After installation, restart this application.")
 }

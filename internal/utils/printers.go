@@ -1,8 +1,8 @@
 package utils
 
 import (
-	"context"
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -42,13 +42,13 @@ func Probe(ip string, port int) bool {
 func LoadOrSetupConfig(ctx context.Context) (model.Config, error) {
 	var config model.Config
 	configFile := ctx.Value(model.ContextConfigFile).(string)
-	
+
 	// Ensure config directory exists
 	configDir := filepath.Dir(configFile)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return config, fmt.Errorf("failed to create config directory: %v", err)
 	}
-	
+
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		config.AppVersion = ctx.Value(model.ContextAppVersion).(string)
 		fmt.Println("--- Initial Setup ---")
@@ -117,7 +117,7 @@ func SavePrinters(printersFile string, printers []model.Printer) error {
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
-	
+
 	data, err := json.MarshalIndent(printers, "", "  ")
 	if err != nil {
 		return err

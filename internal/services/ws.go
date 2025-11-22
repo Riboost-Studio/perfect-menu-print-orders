@@ -1,23 +1,27 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"time"
-	"html/template"
-	"bytes"
+	"runtime"
 	"strconv"
+	"strings"
+	"time"
 
-	"github.com/SebastiaanKlippert/go-wkhtmltopdf"
+	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/chromedp"
 
-	"github.com/gorilla/websocket"
 	"github.com/Riboost-Studio/perfect-menu-print-orders/internal/model"
+	"github.com/gorilla/websocket"
 )
 
 // --- WebSocket Agent Logic ---
@@ -166,7 +170,7 @@ var templateFuncs = template.FuncMap{
 		// Assuming standard RFC3339 or similar from your JSON
 		t, err := time.Parse(time.RFC3339, dateStr)
 		if err != nil {
-            // Fallback try simple date parsing or return original
+			// Fallback try simple date parsing or return original
 			return dateStr
 		}
 		return t.Format("02/01/2006 15:04")
@@ -174,55 +178,81 @@ var templateFuncs = template.FuncMap{
 }
 
 func generateOrderPDF(ctx context.Context, order model.Order, outputPath string) error {
-	// 1. Create a buffer to store the generated HTML
+	// Render HTML from template
 	var htmlBuffer bytes.Buffer
 
-	// 2. Parse the HTML template
 	templatePath := ctx.Value(model.TemplatePath).(string)
 	templateFile := ctx.Value(model.TemplateFile).(string)
 	tmplPath := filepath.Join(templatePath, templateFile)
-	
+
 	tmpl, err := template.New(templateFile).Funcs(templateFuncs).ParseFiles(tmplPath)
 	if err != nil {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	// 3. Execute the template with the order data
 	if err := tmpl.Execute(&htmlBuffer, order); err != nil {
 		return fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	// 4. Initialize the PDF Generator (wkhtmltopdf)
-	pdfg, err := wkhtmltopdf.NewPDFGenerator()
+	var cdpCtx context.Context
+	var cancel context.CancelFunc
+
+	// Special handling for macOS to specify Chrome path
+	if runtime.GOOS == "darwin" {
+		opts := append(
+			chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.ExecPath("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+			chromedp.Flag("no-sandbox", true),
+			chromedp.Flag("disable-gpu", true),
+		)
+
+		allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
+		cdpCtx, cancel = chromedp.NewContext(allocCtx)
+		// Make sure to cancel both contexts on exit
+		defer allocCancel()
+		defer cancel()
+	} else {
+		cdpCtx, cancel = chromedp.NewContext(context.Background())
+		defer cancel()
+	}
+
+	var pdfBytes []byte
+	html := htmlBuffer.String()
+
+	err = chromedp.Run(cdpCtx,
+		// Load HTML directly (data URL)
+		chromedp.Navigate("data:text/html,"+urlEncode(html)),
+
+		// Wait for render
+		chromedp.Sleep(300*time.Millisecond),
+
+		// Convert to PDF
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			var err error
+			pdfBytes, _, err = page.PrintToPDF().
+				WithPrintBackground(true).
+				WithPaperWidth(8.27).  // A4 width
+				WithPaperHeight(11.7). // A4 height
+				Do(ctx)
+			return err
+		}),
+	)
+
 	if err != nil {
-		return fmt.Errorf("failed to initialize pdf generator: %w", err)
+		return fmt.Errorf("failed generating PDF: %w", err)
 	}
 
-	// Set global options
-	pdfg.Dpi.Set(300)
-	pdfg.Orientation.Set(wkhtmltopdf.OrientationPortrait)
-	pdfg.Grayscale.Set(false)
-	pdfg.PageSize.Set(wkhtmltopdf.PageSizeA4)
-
-	// Create a new Page from the HTML string
-	page := wkhtmltopdf.NewPageReader(bytes.NewReader(htmlBuffer.Bytes()))
-	
-	// Optional: Enable local file access if you add images/logos later
-	page.EnableLocalFileAccess.Set(true)
-	
-	pdfg.AddPage(page)
-
-	// 5. Create the PDF
-	if err := pdfg.Create(); err != nil {
-		return fmt.Errorf("failed to create pdf: %w", err)
-	}
-
-	// 6. Write to file
-	if err := pdfg.WriteFile(outputPath); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
+	// Save PDF
+	if err := os.WriteFile(outputPath, pdfBytes, 0644); err != nil {
+		return fmt.Errorf("failed saving PDF: %w", err)
 	}
 
 	return nil
+}
+
+// Helper for encoding HTML into a data URL
+func urlEncode(s string) string {
+	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
 }
 
 func sendFileToPrinter(p model.Printer, filePath string) error {

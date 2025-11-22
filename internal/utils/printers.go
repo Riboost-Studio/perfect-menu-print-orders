@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -41,12 +42,19 @@ func Probe(ip string, port int) bool {
 func LoadOrSetupConfig(ctx context.Context) (model.Config, error) {
 	var config model.Config
 	configFile := ctx.Value(model.ContextConfigFile).(string)
+	
+	// Ensure config directory exists
+	configDir := filepath.Dir(configFile)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return config, fmt.Errorf("failed to create config directory: %v", err)
+	}
+	
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		config.AppVersion = ctx.Value(model.ContextAppVersion).(string)
 		fmt.Println("--- Initial Setup ---")
 		reader := bufio.NewReader(os.Stdin)
 
-		apiUrl := "https://api.localhost"
+		apiUrl := "https://api.perfect-menu.it"
 		fmt.Printf("Enter API URL (default: %s): ", apiUrl)
 		inputApiUrl, _ := reader.ReadString('\n')
 		inputApiUrl = strings.TrimSpace(inputApiUrl)
@@ -56,7 +64,7 @@ func LoadOrSetupConfig(ctx context.Context) (model.Config, error) {
 			config.ApiUrl = apiUrl
 		}
 
-		wsUrl := "wss://ws.localhost/agent"
+		wsUrl := "wss://ws.perfect-menu.it/agent"
 		fmt.Printf("Enter WebSocket URL (default: %s): ", wsUrl)
 		inputWsUrl, _ := reader.ReadString('\n')
 		inputWsUrl = strings.TrimSpace(inputWsUrl)
@@ -104,6 +112,12 @@ func LoadPrinters(ctx context.Context) ([]model.Printer, error) {
 }
 
 func SavePrinters(printersFile string, printers []model.Printer) error {
+	// Ensure config directory exists
+	configDir := filepath.Dir(printersFile)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %v", err)
+	}
+	
 	data, err := json.MarshalIndent(printers, "", "  ")
 	if err != nil {
 		return err

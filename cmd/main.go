@@ -18,10 +18,6 @@ const (
 	appVersion   = "1.0.0"
 	configFile   = "config/config.json"
 	printersFile = "config/printers.json"
-	// apiURL       = "https://api.perfect-menu.it"
-	// wsURL        = "wss://ws.perfect-menu.it/agent"
-	apiURL = "http://api.localhost"
-	wsURL  = "ws://ws.localhost/agent"
 )
 
 // --- Main ---
@@ -50,8 +46,8 @@ func main() {
 		log.Fatal("Config error:", err)
 	}
 	fmt.Printf("Configuration loaded: AppVersion=%s, API URL=%s, WS URL=%s\n", config.AppVersion, config.ApiUrl, config.WsUrl)
-	ctx = context.WithValue(ctx, model.ContextAPIURL, apiURL)
-	ctx = context.WithValue(ctx, model.ContextWSURL, wsURL)
+	ctx = context.WithValue(ctx, model.ContextAPIURL, config.ApiUrl)
+	ctx = context.WithValue(ctx, model.ContextWSURL, config.WsUrl)
 
 	// 2. Load Printers
 	printers, err := utils.LoadPrinters(ctx)

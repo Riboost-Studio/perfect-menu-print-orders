@@ -42,8 +42,29 @@ func LoadOrSetupConfig(ctx context.Context) (model.Config, error) {
 	var config model.Config
 	configFile := ctx.Value(model.ContextConfigFile).(string)
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		config.AppVersion = ctx.Value(model.ContextAppVersion).(string)
 		fmt.Println("--- Initial Setup ---")
 		reader := bufio.NewReader(os.Stdin)
+
+		apiUrl := "https://api.localhost"
+		fmt.Printf("Enter API URL (default: %s): ", apiUrl)
+		inputApiUrl, _ := reader.ReadString('\n')
+		inputApiUrl = strings.TrimSpace(inputApiUrl)
+		if inputApiUrl != "" {
+			config.ApiUrl = inputApiUrl
+		} else {
+			config.ApiUrl = apiUrl
+		}
+
+		wsUrl := "wss://ws.localhost/agent"
+		fmt.Printf("Enter WebSocket URL (default: %s): ", wsUrl)
+		inputWsUrl, _ := reader.ReadString('\n')
+		inputWsUrl = strings.TrimSpace(inputWsUrl)
+		if inputWsUrl != "" {
+			config.WsUrl = inputWsUrl
+		} else {
+			config.WsUrl = wsUrl
+		}
 
 		fmt.Print("Enter Server API Key: ")
 		config.APIKey, _ = reader.ReadString('\n')

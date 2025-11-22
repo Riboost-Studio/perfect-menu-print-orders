@@ -3,9 +3,12 @@ package model
 // --- Configuration Structures ---
 
 type Config struct {
+	AppVersion   string `json:"appVersion"`
 	APIKey       string `json:"apiKey"`
 	TenantID     int    `json:"tenantId"`
 	RestaurantID int    `json:"restaurantId"`
+	ApiUrl       string `json:"apiUrl"`
+	WsUrl        string `json:"wsUrl"`
 }
 
 type Printer struct {

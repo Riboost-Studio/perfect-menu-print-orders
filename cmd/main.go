@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	configFile   = "config.json"
-	printersFile = "printers.json"
+	appVersion   = "1.0.0"
+	configFile   = "config/config.json"
+	printersFile = "config/printers.json"
 	// apiURL       = "https://api.perfect-menu.it"
 	// wsURL        = "wss://ws.perfect-menu.it/agent"
 	apiURL = "http://api.localhost"
@@ -28,18 +29,19 @@ const (
 func main() {
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, model.ContextAppName, "Perfect Menu Print Orders")
-	ctx = context.WithValue(ctx, model.ContextAppVersion, "1.0.0")
+	ctx = context.WithValue(ctx, model.ContextAppVersion, appVersion)
 	ctx = context.WithValue(ctx, model.ContextAppAuthor, "Riboost Studio")
 	ctx = context.WithValue(ctx, model.ContextConfigFile, configFile)
 	ctx = context.WithValue(ctx, model.ContextPrintersFile, printersFile)
-	ctx = context.WithValue(ctx, model.ContextAPIURL, apiURL)
-	ctx = context.WithValue(ctx, model.ContextWSURL, wsURL)
 
 	// 1. Load Configuration
 	config, err := utils.LoadOrSetupConfig(ctx)
 	if err != nil {
 		log.Fatal("Config error:", err)
 	}
+	fmt.Printf("Configuration loaded: AppVersion=%s, API URL=%s, WS URL=%s\n", config.AppVersion, config.ApiUrl, config.WsUrl)
+	ctx = context.WithValue(ctx, model.ContextAPIURL, apiURL)
+	ctx = context.WithValue(ctx, model.ContextWSURL, wsURL)
 
 	// 2. Load Printers
 	printers, err := utils.LoadPrinters(ctx)

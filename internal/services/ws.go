@@ -10,9 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"html/template"
+	"bytes"
+	"strconv"
+
+	"github.com/SebastiaanKlippert/go-wkhtmltopdf"
 
 	"github.com/gorilla/websocket"
-	"github.com/jung-kurt/gofpdf"
 	"github.com/Riboost-Studio/perfect-menu-print-orders/internal/model"
 )
 
@@ -139,67 +143,140 @@ func handlePrintJob(conn *websocket.Conn, p model.Printer, rawOrder json.RawMess
 	}
 }
 
+// func generateOrderPDF(order model.Order, outputPath string) error {
+// 	pdf := gofpdf.New("P", "mm", "A4", "")
+// 	pdf.AddPage()
+// 	pdf.SetFont("Arial", "B", 16)
+
+// 	// Header
+// 	pdf.Cell(40, 10, order.Restaurant.Name)
+// 	pdf.Ln(10)
+// 	pdf.SetFont("Arial", "", 12)
+// 	pdf.Cell(40, 10, fmt.Sprintf("Order #%d", order.ID))
+// 	pdf.Ln(6)
+// 	pdf.Cell(40, 10, fmt.Sprintf("Table: %s", order.Table.Number))
+// 	pdf.Ln(6)
+// 	pdf.Cell(40, 10, fmt.Sprintf("Time: %s", order.CreatedAt))
+// 	pdf.Ln(10)
+
+// 	// Separator
+// 	pdf.Cell(40, 10, "------------------------------------------------")
+// 	pdf.Ln(10)
+
+// 	// Plates
+// 	pdf.SetFont("Arial", "B", 12)
+// 	if len(order.Plates) > 0 {
+// 		pdf.Cell(40, 10, "Food:")
+// 		pdf.Ln(8)
+// 		pdf.SetFont("Arial", "", 12)
+// 		for _, item := range order.Plates {
+// 			line := fmt.Sprintf("%dx %s", item.Quantity, item.Plate.Name)
+// 			pdf.Cell(40, 10, line)
+// 			pdf.Ln(6)
+// 		}
+// 		pdf.Ln(4)
+// 	}
+
+// 	// Drinks
+// 	if len(order.Drinks) > 0 {
+// 		pdf.SetFont("Arial", "B", 12)
+// 		pdf.Cell(40, 10, "Drinks:")
+// 		pdf.Ln(8)
+// 		pdf.SetFont("Arial", "", 12)
+// 		for _, item := range order.Drinks {
+// 			line := fmt.Sprintf("%dx %s", item.Quantity, item.Drink.Name)
+// 			pdf.Cell(40, 10, line)
+// 			pdf.Ln(6)
+// 		}
+// 		pdf.Ln(4)
+// 	}
+
+// 	// Notes
+// 	if order.Notes != nil && *order.Notes != "" {
+// 		pdf.Ln(4)
+// 		pdf.SetFont("Arial", "I", 11)
+// 		pdf.Cell(40, 10, fmt.Sprintf("Notes: %s", *order.Notes))
+// 		pdf.Ln(10)
+// 	}
+
+// 	// Total
+// 	pdf.SetFont("Arial", "B", 14)
+// 	pdf.Cell(40, 10, fmt.Sprintf("Total: %.2f", order.TotalAmount))
+
+// 	return pdf.OutputFileAndClose(outputPath)
+// }
+
+// Define Helper functions for the template (formatting strings to money, dates, etc)
+var templateFuncs = template.FuncMap{
+	// Converts string "10.50" to float, then formats to "10.50"
+	"formatMoney": func(amount string) string {
+		val, err := strconv.ParseFloat(amount, 64)
+		if err != nil {
+			return "0.00"
+		}
+		return fmt.Sprintf("%.2f", val)
+	},
+	// Formats ISO date string to nice format
+	"formatDate": func(dateStr string) string {
+		// Assuming standard RFC3339 or similar from your JSON
+		t, err := time.Parse(time.RFC3339, dateStr)
+		if err != nil {
+            // Fallback try simple date parsing or return original
+			return dateStr
+		}
+		return t.Format("02/01/2006 15:04")
+	},
+}
+
 func generateOrderPDF(order model.Order, outputPath string) error {
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.AddPage()
-	pdf.SetFont("Arial", "B", 16)
+	// 1. Create a buffer to store the generated HTML
+	var htmlBuffer bytes.Buffer
 
-	// Header
-	pdf.Cell(40, 10, order.Restaurant.Name)
-	pdf.Ln(10)
-	pdf.SetFont("Arial", "", 12)
-	pdf.Cell(40, 10, fmt.Sprintf("Order #%d", order.ID))
-	pdf.Ln(6)
-	pdf.Cell(40, 10, fmt.Sprintf("Table: %s", order.Table.Number))
-	pdf.Ln(6)
-	pdf.Cell(40, 10, fmt.Sprintf("Time: %s", order.CreatedAt))
-	pdf.Ln(10)
-
-	// Separator
-	pdf.Cell(40, 10, "------------------------------------------------")
-	pdf.Ln(10)
-
-	// Plates
-	pdf.SetFont("Arial", "B", 12)
-	if len(order.Plates) > 0 {
-		pdf.Cell(40, 10, "Food:")
-		pdf.Ln(8)
-		pdf.SetFont("Arial", "", 12)
-		for _, item := range order.Plates {
-			line := fmt.Sprintf("%dx %s", item.Quantity, item.Plate.Name)
-			pdf.Cell(40, 10, line)
-			pdf.Ln(6)
-		}
-		pdf.Ln(4)
+	// 2. Parse the HTML template
+	// Assumes the HTML file is at ./templates/order.html
+	tmplPath := filepath.Join("templates", "order.html")
+	
+	tmpl, err := template.New("order.html").Funcs(templateFuncs).ParseFiles(tmplPath)
+	if err != nil {
+		return fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	// Drinks
-	if len(order.Drinks) > 0 {
-		pdf.SetFont("Arial", "B", 12)
-		pdf.Cell(40, 10, "Drinks:")
-		pdf.Ln(8)
-		pdf.SetFont("Arial", "", 12)
-		for _, item := range order.Drinks {
-			line := fmt.Sprintf("%dx %s", item.Quantity, item.Drink.Name)
-			pdf.Cell(40, 10, line)
-			pdf.Ln(6)
-		}
-		pdf.Ln(4)
+	// 3. Execute the template with the order data
+	if err := tmpl.Execute(&htmlBuffer, order); err != nil {
+		return fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	// Notes
-	if order.Notes != nil && *order.Notes != "" {
-		pdf.Ln(4)
-		pdf.SetFont("Arial", "I", 11)
-		pdf.Cell(40, 10, fmt.Sprintf("Notes: %s", *order.Notes))
-		pdf.Ln(10)
+	// 4. Initialize the PDF Generator (wkhtmltopdf)
+	pdfg, err := wkhtmltopdf.NewPDFGenerator()
+	if err != nil {
+		return fmt.Errorf("failed to initialize pdf generator: %w", err)
 	}
 
-	// Total
-	pdf.SetFont("Arial", "B", 14)
-	pdf.Cell(40, 10, fmt.Sprintf("Total: %.2f", order.TotalAmount))
+	// Set global options
+	pdfg.Dpi.Set(300)
+	pdfg.Orientation.Set(wkhtmltopdf.OrientationPortrait)
+	pdfg.Grayscale.Set(false)
+	pdfg.PageSize.Set(wkhtmltopdf.PageSizeA4)
 
-	return pdf.OutputFileAndClose(outputPath)
+	// Create a new Page from the HTML string
+	page := wkhtmltopdf.NewPageReader(bytes.NewReader(htmlBuffer.Bytes()))
+	
+	// Optional: Enable local file access if you add images/logos later
+	page.EnableLocalFileAccess.Set(true)
+	
+	pdfg.AddPage(page)
+
+	// 5. Create the PDF
+	if err := pdfg.Create(); err != nil {
+		return fmt.Errorf("failed to create pdf: %w", err)
+	}
+
+	// 6. Write to file
+	if err := pdfg.WriteFile(outputPath); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	return nil
 }
 
 func sendFileToPrinter(p model.Printer, filePath string) error {

@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Order #{{ .NOrder }}</title>
+    <style>
+        /* Base reset and fonts matching your Vue file */
+        body {
+            font-family: 'Arial', sans-serif;
+            background: #ffffff;
+            color: #1f2937;
+            margin: 0;
+            padding: 20px;
+            font-size: 14px;
+        }
+
+        /* Layout Utilities */
+        .header {
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            color: #1f2937;
+        }
+
+        .header p {
+            margin: 5px 0 0;
+            color: #6b7280;
+        }
+
+        /* Info Grid - simplified for PDF compatibility */
+        .info-card {
+            margin-bottom: 30px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .label {
+            font-weight: 600;
+            color: #6b7280;
+        }
+
+        .value {
+            font-weight: 600;
+        }
+
+        /* Items Section */
+        .section-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            margin-top: 20px;
+            color: #374151;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 5px;
+        }
+
+        .item-card {
+            background: #fafafa;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 10px;
+            page-break-inside: avoid; /* Important for PDF */
+        }
+
+        .item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+
+        .item-name {
+            font-weight: 700;
+            font-size: 15px;
+        }
+
+        .badge {
+            background: #e5e7eb;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+
+        .price {
+            color: #059669;
+            font-weight: 700;
+        }
+
+        .item-details {
+            font-size: 12px;
+            color: #6b7280;
+            margin-bottom: 5px;
+        }
+
+        .notes {
+            font-style: italic;
+            color: #6b7280;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        /* Modifiers/Products */
+        .modifiers {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed #d1d5db;
+        }
+
+        .mod-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            padding: 2px 0;
+        }
+
+        .mod-action {
+            font-weight: bold;
+            margin-right: 5px;
+        }
+        .mod-add { color: #059669; }
+        .mod-remove { color: #991b1b; }
+
+        /* Summary */
+        .summary-card {
+            margin-top: 40px;
+            border-top: 2px solid #374151;
+            padding-top: 15px;
+            page-break-inside: avoid;
+        }
+
+        .total-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 20px;
+            font-weight: 700;
+            color: #059669;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>{{ .Restaurant.Name }}</h1>
+            <p>{{ .Restaurant.Description }}</p>
+        </div>
+        <div style="text-align: right;">
+            <h1>Ordine #{{ .NOrder }}/{{ .Year }}</h1>
+            <p>{{ .CreatedAt | formatDate }}</p>
+        </div>
+    </div>
+
+    <div class="info-card">
+        <div class="info-row">
+            <span class="label">Stato:</span>
+            <span class="value">{{ .Status }}</span>
+        </div>
+        <div class="info-row">
+            <span class="label">Tavolo:</span>
+            <span class="value">
+                {{ if .Table }}
+                    {{ .Table.Number }} ({{ .Table.Capacity }} posti)
+                {{ else }}
+                    Asporto/Delivery
+                {{ end }}
+            </span>
+        </div>
+        {{ if .Notes }}
+        <div class="info-row" style="display: block;">
+            <span class="label">Note Generali:</span>
+            <div class="notes" style="font-size: 14px;">{{ .Notes }}</div>
+        </div>
+        {{ end }}
+    </div>
+
+    {{ if .Plates }}
+    <div class="section">
+        <div class="section-title">Piatti ({{ len .Plates }})</div>
+        {{ range .Plates }}
+        <div class="item-card">
+            <div class="item-header">
+                <div>
+                    <span class="item-name">{{ .Plate.Name }}</span>
+                    <span class="badge">x{{ .Quantity }}</span>
+                </div>
+                <span class="price">€ {{ .Subtotal | formatMoney }}</span>
+            </div>
+            
+            <div class="item-details">
+                € {{ .UnitPrice | formatMoney }} cad. | Linea: {{ .LineID }}
+            </div>
+
+            {{ if .Notes }}
+            <div class="notes">Note: {{ .Notes }}</div>
+            {{ end }}
+
+            {{ if .OrderPlateProducts }}
+            <div class="modifiers">
+                {{ range .OrderPlateProducts }}
+                <div class="mod-item">
+                    <div>
+                        <span class="mod-action mod-add">+</span>
+                        {{ .Product.Name }} x{{ .Quantity }}
+                    </div>
+                    <span>€ {{ .Subtotal | formatMoney }}</span>
+                </div>
+                {{ end }}
+            </div>
+            {{ end }}
+        </div>
+        {{ end }}
+    </div>
+    {{ end }}
+
+    {{ if .Drinks }}
+    <div class="section">
+        <div class="section-title">Bevande ({{ len .Drinks }})</div>
+        {{ range .Drinks }}
+        <div class="item-card">
+            <div class="item-header">
+                <div>
+                    <span class="item-name">{{ .Drink.Name }}</span>
+                    <span class="badge">x{{ .Quantity }}</span>
+                </div>
+                <span class="price">€ {{ .Subtotal | formatMoney }}</span>
+            </div>
+            
+            <div class="item-details">
+                € {{ .UnitPrice | formatMoney }} cad.
+            </div>
+
+            {{ if .Notes }}
+            <div class="notes">Note: {{ .Notes }}</div>
+            {{ end }}
+        </div>
+        {{ end }}
+    </div>
+    {{ end }}
+
+    <div class="summary-card">
+        <div class="total-row">
+            <span>Totale</span>
+            <span>€ {{ .TotalAmount | formatMoney }}</span>
+        </div>
+    </div>
+</body>
+</html>

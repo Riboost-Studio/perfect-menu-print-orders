@@ -36,6 +36,14 @@ func main() {
 	ctx = context.WithValue(ctx, model.TemplatePath, "templates")
 	ctx = context.WithValue(ctx, model.TemplateFile, "order.html")
 
+	// 0. Validate System Requirements
+	fmt.Println("=== System Validation ===")
+	if err := utils.ValidateSystemRequirements(); err != nil {
+		log.Fatal("System validation failed:", err)
+	}
+	fmt.Println("=== System OK ===")
+	fmt.Println()
+
 	// 1. Load Configuration
 	config, err := utils.LoadOrSetupConfig(ctx)
 	if err != nil {

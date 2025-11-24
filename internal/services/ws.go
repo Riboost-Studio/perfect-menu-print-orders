@@ -316,14 +316,29 @@ func sendFileToPrinter(p model.Printer, filePath string) error {
 		return fmt.Errorf("failed to decode PNG: %w", err)
 	}
 
+	img = resizeToWidth(img, 384)
+
 	// --- Convert to ESC/POS raster ---
 	escposData, err := convertImageToESCPOS(img)
 	if err != nil {
 		return fmt.Errorf("ESC/POS conversion failed: %w", err)
 	}
 
+	// --- Build complete print job ---
+	var printJob []byte
+	
+	// Initialize printer
+	printJob = append(printJob, 0x1B, 0x40) // ESC @
+	
+	// Add the image data
+	printJob = append(printJob, escposData...)
+	
+	// Feed paper and cut (optional but recommended)
+	printJob = append(printJob, 0x1B, 0x64, 0x03) // ESC d 3 - feed 3 lines
+	printJob = append(printJob, 0x1D, 0x56, 0x41, 0x00) // GS V A 0 - partial cut
+
 	log.Printf("[%s] Sending %d bytes to %s:%d",
-		p.Name, len(escposData), p.IP, p.Port)
+		p.Name, len(printJob), p.IP, p.Port)
 
 	// --- Send to printer ---
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", p.IP, p.Port), 5*time.Second)
@@ -332,11 +347,35 @@ func sendFileToPrinter(p model.Printer, filePath string) error {
 	}
 	defer conn.Close()
 
-	_, err = conn.Write(escposData)
+	_, err = conn.Write(printJob)
 	if err != nil {
 		return fmt.Errorf("write failed: %w", err)
 	}
 
+	// Give printer time to process
+	time.Sleep(500 * time.Millisecond)
+
 	return nil
 }
 
+func resizeToWidth(src image.Image, targetWidth int) image.Image {
+    bounds := src.Bounds()
+    w := bounds.Dx()
+    h := bounds.Dy()
+
+    // ESC/POS standard width is normally 384px
+    scale := float64(targetWidth) / float64(w)
+    newHeight := int(float64(h) * scale)
+
+    dst := image.NewRGBA(image.Rect(0, 0, targetWidth, newHeight))
+
+    for y := 0; y < newHeight; y++ {
+        for x := 0; x < targetWidth; x++ {
+            sx := int(float64(x) / scale)
+            sy := int(float64(y) / scale)
+            dst.Set(x, y, src.At(sx, sy))
+        }
+    }
+
+    return dst
+}

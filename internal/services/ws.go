@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"image"
+	"image/png"
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
@@ -114,17 +116,17 @@ func handlePrintJob(ctx context.Context, conn *websocket.Conn, p model.Printer, 
 	for _, order := range payload.Data.Orders {
 		log.Printf("[%s] Processing Order #%d for Table %s", p.Name, order.ID, order.Table.Number)
 
-		// 2. Generate PDF
-		pdfPath := filepath.Join(tmpDir, fmt.Sprintf("%s_order_%d.pdf", p.AgentKey, order.ID))
-		err := generateOrderPDF(ctx, order, pdfPath)
+		// 2. Generate IMG
+		imgPath := filepath.Join(tmpDir, fmt.Sprintf("%s_order_%d.png", p.AgentKey, order.ID))
+		err := generateOrderImage(ctx, order, imgPath)
 		if err != nil {
-			log.Printf("[%s] Failed to generate PDF: %v", p.Name, err)
+			log.Printf("[%s] Failed to generate IMG: %v", p.Name, err)
 			continue
 		}
-		log.Printf("[%s] PDF generated: %s", p.Name, pdfPath)
+		log.Printf("[%s] IMG generated: %s", p.Name, imgPath)
 
-		// 3. Send PDF to Printer
-		if err := sendFileToPrinter(p, pdfPath); err != nil {
+		// 3. Send IMG to Printer
+		if err := sendFileToPrinter(p, imgPath); err != nil {
 			log.Printf("[%s] Failed to send to printer: %v", p.Name, err)
 			regMsg := model.WSMessage{
 				Type:     model.MessageTypePrintFailed,
@@ -146,7 +148,7 @@ func handlePrintJob(ctx context.Context, conn *websocket.Conn, p model.Printer, 
 			log.Printf("[%s] Order sent successfully!", p.Name)
 
 			// 4. Cleanup (Commented out as requested)
-			if err := os.Remove(pdfPath); err != nil {
+			if err := os.Remove(imgPath); err != nil {
 				log.Printf("[%s] Warning: Failed to delete tmp file: %v", p.Name, err)
 			} else {
 				log.Printf("[%s] Tmp file deleted.", p.Name)
@@ -177,7 +179,7 @@ var templateFuncs = template.FuncMap{
 	},
 }
 
-func generateOrderPDF(ctx context.Context, order model.Order, outputPath string) error {
+func generateOrderImage(ctx context.Context, order model.Order, outputPath string) error {
 	// Render HTML from template
 	var htmlBuffer bytes.Buffer
 
@@ -197,7 +199,7 @@ func generateOrderPDF(ctx context.Context, order model.Order, outputPath string)
 	var cdpCtx context.Context
 	var cancel context.CancelFunc
 
-	// Special handling for macOS to specify Chrome path
+	// macOS: force Chrome path
 	if runtime.GOOS == "darwin" {
 		opts := append(
 			chromedp.DefaultExecAllocatorOptions[:],
@@ -208,7 +210,6 @@ func generateOrderPDF(ctx context.Context, order model.Order, outputPath string)
 
 		allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
 		cdpCtx, cancel = chromedp.NewContext(allocCtx)
-		// Make sure to cancel both contexts on exit
 		defer allocCancel()
 		defer cancel()
 	} else {
@@ -216,66 +217,126 @@ func generateOrderPDF(ctx context.Context, order model.Order, outputPath string)
 		defer cancel()
 	}
 
-	var pdfBytes []byte
 	html := htmlBuffer.String()
+	var pngBytes []byte
 
 	err = chromedp.Run(cdpCtx,
-		// Load HTML directly (data URL)
+		// Load HTML directly using data URL
 		chromedp.Navigate("data:text/html,"+urlEncode(html)),
 
-		// Wait for render
+		// Wait for the page to render
 		chromedp.Sleep(300*time.Millisecond),
 
-		// Convert to PDF
+		// Capture full-page PNG screenshot
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			var err error
-			pdfBytes, _, err = page.PrintToPDF().
-				WithPrintBackground(true).
-				WithPaperWidth(8.27).  // A4 width
-				WithPaperHeight(11.7). // A4 height
+			buf, err := page.CaptureScreenshot().
+				WithCaptureBeyondViewport(true). // capture full height
 				Do(ctx)
-			return err
+			if err != nil {
+				return err
+			}
+
+			pngBytes = buf
+			return nil
 		}),
 	)
 
 	if err != nil {
-		return fmt.Errorf("failed generating PDF: %w", err)
+		return fmt.Errorf("failed generating image: %w", err)
 	}
 
-	// Save PDF
-	if err := os.WriteFile(outputPath, pdfBytes, 0644); err != nil {
-		return fmt.Errorf("failed saving PDF: %w", err)
+	// Save PNG
+	if err := os.WriteFile(outputPath, pngBytes, 0644); err != nil {
+		return fmt.Errorf("failed saving image: %w", err)
 	}
 
 	return nil
 }
+
 
 // Helper for encoding HTML into a data URL
 func urlEncode(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
 }
 
-func sendFileToPrinter(p model.Printer, filePath string) error {
-	// Read the generated file
-	fileData, err := os.ReadFile(filePath)
-	if err != nil {
-		return err
+func convertImageToESCPOS(img image.Image) ([]byte, error) {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+
+	// ESC/POS width must be divisible by 8
+	if width%8 != 0 {
+		width = width - (width % 8)
 	}
 
-	log.Printf("[%s] Sending %d bytes to %s:%d", p.Name, len(fileData), p.IP, p.Port)
+	rowBytes := width / 8
+	raster := make([]byte, rowBytes*height)
 
+	// Convert to 1-bit
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			gray := (r + g + b) / 3
+
+			bit := uint8(0)
+			if gray < 0x8000 { // threshold
+				bit = 1
+			}
+
+			byteIndex := y*rowBytes + x/8
+			bitPos := 7 - (x % 8)
+
+			if bit == 1 {
+				raster[byteIndex] |= (1 << bitPos)
+			}
+		}
+	}
+
+	// ESC/POS header: GS v 0
+	header := []byte{
+		0x1D, 0x76, 0x30, 0x00,
+		byte(rowBytes), byte(rowBytes >> 8),
+		byte(height), byte(height >> 8),
+	}
+
+	return append(header, raster...), nil
+}
+
+
+func sendFileToPrinter(p model.Printer, filePath string) error {
+	// --- Load PNG ---
+	imgFile, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open image: %w", err)
+	}
+	defer imgFile.Close()
+
+	img, err := png.Decode(imgFile)
+	if err != nil {
+		return fmt.Errorf("failed to decode PNG: %w", err)
+	}
+
+	// --- Convert to ESC/POS raster ---
+	escposData, err := convertImageToESCPOS(img)
+	if err != nil {
+		return fmt.Errorf("ESC/POS conversion failed: %w", err)
+	}
+
+	log.Printf("[%s] Sending %d bytes to %s:%d",
+		p.Name, len(escposData), p.IP, p.Port)
+
+	// --- Send to printer ---
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", p.IP, p.Port), 5*time.Second)
 	if err != nil {
-		return err
+		return fmt.Errorf("connection failed: %w", err)
 	}
 	defer conn.Close()
 
-	// Send file content to printer
-	// Note: Port 9100 printers usually expect raw text, PCL, or PostScript.
-	// Sending a PDF binary directly might not work unless the printer explicitly supports PDF emulation.
-	_, err = conn.Write(fileData)
+	_, err = conn.Write(escposData)
 	if err != nil {
-		return err
+		return fmt.Errorf("write failed: %w", err)
 	}
+
 	return nil
 }
+

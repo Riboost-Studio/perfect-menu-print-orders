@@ -1,11 +1,9 @@
 package services
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"log"
 	"net"
 	"net/http"
@@ -13,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 	"image"
@@ -100,11 +97,14 @@ func handlePrintJob(ctx context.Context, conn *websocket.Conn, p model.Printer, 
 		log.Printf("[%s] Error parsing order JSON: %v", p.Name, err)
 		return
 	}
-
-	if !payload.Success || len(payload.Data.Orders) == 0 {
-		log.Printf("[%s] No valid orders in payload", p.Name)
+	
+	// Ensure we have content to print
+	if payload.Data.Content == "" {
+		log.Printf("[%s] Received empty content, skipping.", p.Name)
 		return
 	}
+
+	log.Printf("[%s] Processing Order ID: %d", p.Name, payload.Data.Metadata.OrderId)
 
 	// Ensure tmp directory exists
 	tmpDir := "tmp"
@@ -112,94 +112,77 @@ func handlePrintJob(ctx context.Context, conn *websocket.Conn, p model.Printer, 
 		os.Mkdir(tmpDir, 0755)
 	}
 
-	// Process each order in the array
-	for _, order := range payload.Data.Orders {
-		log.Printf("[%s] Processing Order #%d for Table %s", p.Name, order.ID, order.Table.Number)
+	// Determine number of copies (default to 1 if 0)
+	copies := payload.Data.Copies
+	if copies < 1 {
+		copies = 1
+	}
 
-		// 2. Generate IMG
-		imgPath := filepath.Join(tmpDir, fmt.Sprintf("%s_order_%d.png", p.AgentKey, order.ID))
-		err := generateOrderImage(ctx, order, imgPath)
-		if err != nil {
-			log.Printf("[%s] Failed to generate IMG: %v", p.Name, err)
-			continue
+	// 2. Generate IMG (We do this once per payload to save processing)
+	// We use the OrderId and a timestamp to ensure uniqueness
+	fileName := fmt.Sprintf("%s_order_%d_%d.png", p.AgentKey, payload.Data.Metadata.OrderId, time.Now().Unix())
+	imgPath := filepath.Join(tmpDir, fileName)
+
+	// Pass the HTML content directly from the payload
+	err := generateOrderImage(ctx, payload.Data.Content, imgPath)
+	if err != nil {
+		log.Printf("[%s] Failed to generate IMG: %v", p.Name, err)
+		
+		// Report failure
+		failMsg := model.WSMessage{
+			Type:     model.MessageTypePrintFailed,
+			AgentKey: p.AgentKey,
+			Error:    err.Error(),
 		}
-		log.Printf("[%s] IMG generated: %s", p.Name, imgPath)
+		conn.WriteJSON(failMsg)
+		return
+	}
+	log.Printf("[%s] IMG generated: %s", p.Name, imgPath)
 
-		// 3. Send IMG to Printer
+	// 3. Send IMG to Printer (Loop for copies)
+	success := true
+	for i := 0; i < copies; i++ {
+		log.Printf("[%s] Printing copy %d of %d", p.Name, i+1, copies)
 		if err := sendFileToPrinter(p, imgPath); err != nil {
 			log.Printf("[%s] Failed to send to printer: %v", p.Name, err)
-			regMsg := model.WSMessage{
+			success = false
+			
+			// Report failure
+			failMsg := model.WSMessage{
 				Type:     model.MessageTypePrintFailed,
 				AgentKey: p.AgentKey,
 				Error:    err.Error(),
 			}
-			if err := conn.WriteJSON(regMsg); err != nil {
-				log.Printf("[%s] Failed to send print_failed: %v", p.Name, err)
-			}
-		} else {
-			regMsg := model.WSMessage{
-				Type:     model.MessageTypePrinted,
-				AgentKey: p.AgentKey,
-			}
-			if err := conn.WriteJSON(regMsg); err != nil {
-				log.Printf("[%s] Failed to send printed: %v", p.Name, err)
-				return
-			}
-			log.Printf("[%s] Order sent successfully!", p.Name)
-
-			// 4. Cleanup (Commented out as requested)
-			if err := os.Remove(imgPath); err != nil {
-				log.Printf("[%s] Warning: Failed to delete tmp file: %v", p.Name, err)
-			} else {
-				log.Printf("[%s] Tmp file deleted.", p.Name)
-			}
+			conn.WriteJSON(failMsg)
+			break // Stop trying to print copies if one fails
 		}
+	}
+
+	if success {
+		regMsg := model.WSMessage{
+			Type:     model.MessageTypePrinted,
+			AgentKey: p.AgentKey,
+		}
+		if err := conn.WriteJSON(regMsg); err != nil {
+			log.Printf("[%s] Failed to send printed confirmation: %v", p.Name, err)
+		}
+		log.Printf("[%s] Order sent successfully!", p.Name)
+	}
+
+	// 4. Cleanup
+	if err := os.Remove(imgPath); err != nil {
+		log.Printf("[%s] Warning: Failed to delete tmp file: %v", p.Name, err)
+	} else {
+		log.Printf("[%s] Tmp file deleted.", p.Name)
 	}
 }
 
-// Define Helper functions for the template (formatting strings to money, dates, etc)
-var templateFuncs = template.FuncMap{
-	// Converts string "10.50" to float, then formats to "10.50"
-	"formatMoney": func(amount string) string {
-		val, err := strconv.ParseFloat(amount, 64)
-		if err != nil {
-			return "0.00"
-		}
-		return fmt.Sprintf("%.2f", val)
-	},
-	// Formats ISO date string to nice format
-	"formatDate": func(dateStr string) string {
-		// Assuming standard RFC3339 or similar from your JSON
-		t, err := time.Parse(time.RFC3339, dateStr)
-		if err != nil {
-			// Fallback try simple date parsing or return original
-			return dateStr
-		}
-		return t.Format("02/01/2006 15:04")
-	},
-}
-
-func generateOrderImage(ctx context.Context, order model.Order, outputPath string) error {
-	// Render HTML from template
-	var htmlBuffer bytes.Buffer
-
-	templatePath := ctx.Value(model.TemplatePath).(string)
-	templateFile := ctx.Value(model.TemplateFile).(string)
-	tmplPath := filepath.Join(templatePath, templateFile)
-
-	tmpl, err := template.New(templateFile).Funcs(templateFuncs).ParseFiles(tmplPath)
-	if err != nil {
-		return fmt.Errorf("failed to parse template: %w", err)
-	}
-
-	if err := tmpl.Execute(&htmlBuffer, order); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
-	}
-
+// generateOrderImage now accepts the HTML content string directly
+func generateOrderImage(ctx context.Context, htmlContent string, outputPath string) error {
 	var cdpCtx context.Context
 	var cancel context.CancelFunc
 
-	// macOS: force Chrome path
+	// macOS: force Chrome path (adjust if running on Linux/Windows production)
 	if runtime.GOOS == "darwin" {
 		opts := append(
 			chromedp.DefaultExecAllocatorOptions[:],
@@ -217,12 +200,11 @@ func generateOrderImage(ctx context.Context, order model.Order, outputPath strin
 		defer cancel()
 	}
 
-	html := htmlBuffer.String()
 	var pngBytes []byte
 
-	err = chromedp.Run(cdpCtx,
+	err := chromedp.Run(cdpCtx,
 		// Load HTML directly using data URL
-		chromedp.Navigate("data:text/html,"+urlEncode(html)),
+		chromedp.Navigate("data:text/html,"+urlEncode(htmlContent)),
 
 		// Wait for the page to render
 		chromedp.Sleep(300*time.Millisecond),
@@ -252,7 +234,6 @@ func generateOrderImage(ctx context.Context, order model.Order, outputPath strin
 
 	return nil
 }
-
 
 // Helper for encoding HTML into a data URL
 func urlEncode(s string) string {

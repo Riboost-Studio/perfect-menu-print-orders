@@ -151,9 +151,10 @@ func handlePrintJob(ctx context.Context, conn *websocket.Conn, p model.Printer, 
 			log.Printf("[%s] Failed to send to printer: %v", p.Name, err)
 			success = false
 			
-			failMsg := model.WSMessage{
+			failMsg := model.WSMessageTypePrintFailed{
 				Type:     model.MessageTypePrintFailed,
 				AgentKey: p.AgentKey,
+				OrderID:  payload.Data.Metadata.OrderId,
 				Error:    err.Error(),
 			}
 			conn.WriteJSON(failMsg)

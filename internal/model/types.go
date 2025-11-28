@@ -23,3 +23,10 @@ type WSMessage struct {
 	Order    json.RawMessage `json:"order,omitempty"` // Keep raw to parse into specific structs
 	Error    string          `json:"error,omitempty"`
 }
+
+type WSMessageTypePrintFailed struct {
+	Type     MessageType `json:"type"`
+	AgentKey string      `json:"agent_key"`
+	OrderID  int         `json:"order_id"`
+	Error    string      `json:"error"`
+}

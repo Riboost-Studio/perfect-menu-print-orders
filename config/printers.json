@@ -3,10 +3,11 @@
     "name": "Test Printer 2",
     "ip": "192.168.1.114",
     "port": 9100,
-    "description": "Thermal Printer",
+    "description": "Thermal ADDDDD",
     "isEnabled": true,
     "tenantId": 1,
     "restaurantId": 1,
-    "agent_key": "26771197-85e4-4f97-adde-869637475c31"
+    "agent_key": "26771197-85e4-4f97-adde-869637475c31",
+    "type": "thermal"
   }
 ]

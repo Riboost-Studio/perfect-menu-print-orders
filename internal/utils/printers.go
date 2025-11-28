@@ -118,7 +118,33 @@ func SavePrinters(printersFile string, printers []model.Printer) error {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
 
-	data, err := json.MarshalIndent(printers, "", "  ")
+	// Load existing printers if file exists
+	var existingPrinters []model.Printer
+	if _, err := os.Stat(printersFile); err == nil {
+		data, err := os.ReadFile(printersFile)
+		if err != nil {
+			return fmt.Errorf("failed to read existing printers file: %v", err)
+		}
+		if err := json.Unmarshal(data, &existingPrinters); err != nil {
+			return fmt.Errorf("failed to unmarshal existing printers: %v", err)
+		}
+	}
+
+	// Create a map of existing printers for efficient lookup
+	existingPrintersMap := make(map[string]model.Printer)
+	for _, printer := range existingPrinters {
+		// Use IP as the unique identifier for printers
+		existingPrintersMap[printer.IP] = printer
+	}
+
+	// Add new printers that don't exist
+	for _, printer := range printers {
+		if _, exists := existingPrintersMap[printer.IP]; !exists {
+			existingPrinters = append(existingPrinters, printer)
+		}
+	}
+
+	data, err := json.MarshalIndent(existingPrinters, "", "  ")
 	if err != nil {
 		return err
 	}

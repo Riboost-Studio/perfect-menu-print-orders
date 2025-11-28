@@ -128,3 +128,55 @@ func RegisterPrinterOnServer(ctx context.Context, p *model.Printer, apiKey strin
 	return fmt.Errorf("no agent_key found in response")
 }
 
+func GetPrintersFromServer(ctx context.Context/*, p *model.Printer*/, apiKey string) ([]model.Printer, error) {
+	apiURL := ctx.Value(model.ContextAPIURL).(string) + "/api/printers"
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", apiKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API Error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var responseMap map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&responseMap); err != nil {
+		return nil, err
+	}
+
+	if data, ok := responseMap["data"].(map[string]interface{}); ok {
+		if printers, ok := data["printers"].([]interface{}); ok {
+			var result []model.Printer
+			for _, item := range printers {
+				if pMap, ok := item.(map[string]interface{}); ok {
+					pBytes, err := json.Marshal(pMap)
+					if err != nil {
+						continue
+					}
+					var p model.Printer
+					if err := json.Unmarshal(pBytes, &p); err != nil {
+						continue
+					}
+					result = append(result, p)
+				}
+			}
+			return result, nil
+		}
+		return nil, nil
+	}
+
+	return nil, fmt.Errorf("no agent_key found in response")
+}
+
+

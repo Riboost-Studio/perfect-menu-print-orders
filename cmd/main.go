@@ -49,6 +49,14 @@ func main() {
 	ctx = context.WithValue(ctx, model.ContextAPIURL, config.ApiUrl)
 	ctx = context.WithValue(ctx, model.ContextWSURL, config.WsUrl)
 
+	// Sync Printers with Server
+	serverPrinters, err := services.GetPrintersFromServer(ctx, config.APIKey)
+	if err != nil {
+		log.Println("Error getting printers from server:", err)
+	}
+	utils.SavePrinters(printersFile, serverPrinters)
+	log.Printf("Synchronized %d printers from server.\n", len(serverPrinters))
+
 	// 2. Load Printers
 	printers, err := utils.LoadPrinters(ctx)
 	if err != nil {

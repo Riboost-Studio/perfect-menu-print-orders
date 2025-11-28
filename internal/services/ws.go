@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -21,6 +22,13 @@ import (
 
 	"github.com/Riboost-Studio/perfect-menu-print-orders/internal/model"
 	"github.com/gorilla/websocket"
+)
+
+// Printer type constants
+const (
+	PrinterTypeThermal = "thermal"
+	PrinterTypeInkjet  = "inkjet"
+	PrinterTypeLaser   = "laser"
 )
 
 // --- WebSocket Agent Logic ---
@@ -77,7 +85,6 @@ func handleConnection(ctx context.Context, conn *websocket.Conn, p model.Printer
 
 		case model.MessageTypeNewOrder:
 			log.Printf("[%s] Received print order...", p.Name)
-			// Pass the raw JSON to be parsed specifically
 			handlePrintJob(ctx, conn, p, msg.Order)
 
 		case model.MessageTypeUnregister:
@@ -104,7 +111,7 @@ func handlePrintJob(ctx context.Context, conn *websocket.Conn, p model.Printer, 
 		return
 	}
 
-	log.Printf("[%s] Processing Order ID: %d", p.Name, payload.Data.Metadata.OrderId)
+	log.Printf("[%s] Processing Order ID: %d (Type: %s)", p.Name, payload.Data.Metadata.OrderId, p.Type)
 
 	// Ensure tmp directory exists
 	tmpDir := "tmp"
@@ -118,17 +125,14 @@ func handlePrintJob(ctx context.Context, conn *websocket.Conn, p model.Printer, 
 		copies = 1
 	}
 
-	// 2. Generate IMG (We do this once per payload to save processing)
-	// We use the OrderId and a timestamp to ensure uniqueness
+	// 2. Generate IMG
 	fileName := fmt.Sprintf("%s_order_%d_%d.png", p.AgentKey, payload.Data.Metadata.OrderId, time.Now().Unix())
 	imgPath := filepath.Join(tmpDir, fileName)
 
-	// Pass the HTML content directly from the payload
 	err := generateOrderImage(ctx, payload.Data.Content, imgPath)
 	if err != nil {
 		log.Printf("[%s] Failed to generate IMG: %v", p.Name, err)
 		
-		// Report failure
 		failMsg := model.WSMessage{
 			Type:     model.MessageTypePrintFailed,
 			AgentKey: p.AgentKey,
@@ -147,14 +151,13 @@ func handlePrintJob(ctx context.Context, conn *websocket.Conn, p model.Printer, 
 			log.Printf("[%s] Failed to send to printer: %v", p.Name, err)
 			success = false
 			
-			// Report failure
 			failMsg := model.WSMessage{
 				Type:     model.MessageTypePrintFailed,
 				AgentKey: p.AgentKey,
 				Error:    err.Error(),
 			}
 			conn.WriteJSON(failMsg)
-			break // Stop trying to print copies if one fails
+			break
 		}
 	}
 
@@ -177,12 +180,11 @@ func handlePrintJob(ctx context.Context, conn *websocket.Conn, p model.Printer, 
 	}
 }
 
-// generateOrderImage now accepts the HTML content string directly
 func generateOrderImage(ctx context.Context, htmlContent string, outputPath string) error {
 	var cdpCtx context.Context
 	var cancel context.CancelFunc
 
-	// macOS: force Chrome path (adjust if running on Linux/Windows production)
+	// macOS: force Chrome path
 	if runtime.GOOS == "darwin" {
 		opts := append(
 			chromedp.DefaultExecAllocatorOptions[:],
@@ -203,21 +205,15 @@ func generateOrderImage(ctx context.Context, htmlContent string, outputPath stri
 	var pngBytes []byte
 
 	err := chromedp.Run(cdpCtx,
-		// Load HTML directly using data URL
 		chromedp.Navigate("data:text/html,"+urlEncode(htmlContent)),
-
-		// Wait for the page to render
 		chromedp.Sleep(300*time.Millisecond),
-
-		// Capture full-page PNG screenshot
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			buf, err := page.CaptureScreenshot().
-				WithCaptureBeyondViewport(true). // capture full height
+				WithCaptureBeyondViewport(true).
 				Do(ctx)
 			if err != nil {
 				return err
 			}
-
 			pngBytes = buf
 			return nil
 		}),
@@ -227,7 +223,6 @@ func generateOrderImage(ctx context.Context, htmlContent string, outputPath stri
 		return fmt.Errorf("failed generating image: %w", err)
 	}
 
-	// Save PNG
 	if err := os.WriteFile(outputPath, pngBytes, 0644); err != nil {
 		return fmt.Errorf("failed saving image: %w", err)
 	}
@@ -235,11 +230,143 @@ func generateOrderImage(ctx context.Context, htmlContent string, outputPath stri
 	return nil
 }
 
-// Helper for encoding HTML into a data URL
 func urlEncode(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
 }
 
+// --- MAIN DISPATCHER ---
+func sendFileToPrinter(p model.Printer, filePath string) error {
+	// Normalize printer type to lowercase
+	printerType := strings.ToLower(strings.TrimSpace(p.Type))
+	
+	switch printerType {
+	case PrinterTypeThermal:
+		return sendToThermalPrinter(p, filePath)
+	
+	case PrinterTypeInkjet, PrinterTypeLaser:
+		return sendToSystemPrinter(p, filePath)
+	
+	case "":
+		// Default to thermal for backward compatibility
+		log.Printf("[%s] Warning: No printer type specified, defaulting to thermal", p.Name)
+		return sendToThermalPrinter(p, filePath)
+	
+	default:
+		return fmt.Errorf("unsupported printer type: %s (must be thermal, inkjet, or laser)", p.Type)
+	}
+}
+
+// --- THERMAL PRINTER (ESC/POS) ---
+func sendToThermalPrinter(p model.Printer, filePath string) error {
+	log.Printf("[%s] Using thermal printer mode (ESC/POS)", p.Name)
+	
+	// Load PNG
+	imgFile, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open image: %w", err)
+	}
+	defer imgFile.Close()
+
+	img, err := png.Decode(imgFile)
+	if err != nil {
+		return fmt.Errorf("failed to decode PNG: %w", err)
+	}
+
+	// Resize to thermal printer width (384px standard)
+	img = resizeToWidth(img, 384)
+
+	// Convert to ESC/POS raster
+	escposData, err := convertImageToESCPOS(img)
+	if err != nil {
+		return fmt.Errorf("ESC/POS conversion failed: %w", err)
+	}
+
+	// Build complete print job
+	var printJob []byte
+	
+	// Initialize printer
+	printJob = append(printJob, 0x1B, 0x40) // ESC @
+	
+	// Add the image data
+	printJob = append(printJob, escposData...)
+	
+	// Feed paper and cut
+	printJob = append(printJob, 0x1B, 0x64, 0x03) // ESC d 3 - feed 3 lines
+	printJob = append(printJob, 0x1D, 0x56, 0x41, 0x00) // GS V A 0 - partial cut
+
+	log.Printf("[%s] Sending %d bytes to %s:%d", p.Name, len(printJob), p.IP, p.Port)
+
+	// Send to printer via raw TCP
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", p.IP, p.Port), 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("connection failed: %w", err)
+	}
+	defer conn.Close()
+
+	_, err = conn.Write(printJob)
+	if err != nil {
+		return fmt.Errorf("write failed: %w", err)
+	}
+
+	// Give printer time to process
+	time.Sleep(500 * time.Millisecond)
+
+	return nil
+}
+
+// --- INKJET/LASER PRINTER (System Print Spooler) ---
+func sendToSystemPrinter(p model.Printer, filePath string) error {
+	log.Printf("[%s] Using system printer mode (%s)", p.Name, p.Type)
+	
+	var cmd *exec.Cmd
+	
+	switch runtime.GOOS {
+	case "darwin": // macOS
+		// Try using the printer name if configured in system
+		if p.Name != "" {
+			cmd = exec.Command("lpr", "-P", p.Name, filePath)
+		} else {
+			// Fallback to IPP
+			ippURI := fmt.Sprintf("ipp://%s/ipp/print", p.IP)
+			cmd = exec.Command("lpr", "-H", p.IP, filePath)
+			log.Printf("[%s] Using IPP URI: %s", p.Name, ippURI)
+		}
+		
+	case "linux":
+		// Try using the printer name if configured in system
+		if p.Name != "" {
+			cmd = exec.Command("lp", "-d", p.Name, filePath)
+		} else {
+			// Fallback to IPP
+			ippURI := fmt.Sprintf("ipp://%s/ipp/print", p.IP)
+			cmd = exec.Command("lp", "-d", ippURI, filePath)
+			log.Printf("[%s] Using IPP URI: %s", p.Name, ippURI)
+		}
+		
+	case "windows":
+		// Windows printing
+		if p.Name != "" {
+			// Use mspaint for simple printing (or use a better method)
+			cmd = exec.Command("mspaint.exe", "/pt", filePath, p.Name)
+		} else {
+			return fmt.Errorf("Windows printer requires printer name to be configured in system")
+		}
+		
+	default:
+		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	}
+	
+	// Execute print command
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("print command failed: %w, output: %s", err, string(output))
+	}
+	
+	log.Printf("[%s] Sent to system print spooler", p.Name)
+	return nil
+}
+
+// --- ESC/POS CONVERSION ---
 func convertImageToESCPOS(img image.Image) ([]byte, error) {
 	bounds := img.Bounds()
 	width := bounds.Dx()
@@ -283,68 +410,12 @@ func convertImageToESCPOS(img image.Image) ([]byte, error) {
 	return append(header, raster...), nil
 }
 
-
-func sendFileToPrinter(p model.Printer, filePath string) error {
-	// --- Load PNG ---
-	imgFile, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to open image: %w", err)
-	}
-	defer imgFile.Close()
-
-	img, err := png.Decode(imgFile)
-	if err != nil {
-		return fmt.Errorf("failed to decode PNG: %w", err)
-	}
-
-	img = resizeToWidth(img, 384)
-
-	// --- Convert to ESC/POS raster ---
-	escposData, err := convertImageToESCPOS(img)
-	if err != nil {
-		return fmt.Errorf("ESC/POS conversion failed: %w", err)
-	}
-
-	// --- Build complete print job ---
-	var printJob []byte
-	
-	// Initialize printer
-	printJob = append(printJob, 0x1B, 0x40) // ESC @
-	
-	// Add the image data
-	printJob = append(printJob, escposData...)
-	
-	// Feed paper and cut (optional but recommended)
-	printJob = append(printJob, 0x1B, 0x64, 0x03) // ESC d 3 - feed 3 lines
-	printJob = append(printJob, 0x1D, 0x56, 0x41, 0x00) // GS V A 0 - partial cut
-
-	log.Printf("[%s] Sending %d bytes to %s:%d",
-		p.Name, len(printJob), p.IP, p.Port)
-
-	// --- Send to printer ---
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", p.IP, p.Port), 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("connection failed: %w", err)
-	}
-	defer conn.Close()
-
-	_, err = conn.Write(printJob)
-	if err != nil {
-		return fmt.Errorf("write failed: %w", err)
-	}
-
-	// Give printer time to process
-	time.Sleep(500 * time.Millisecond)
-
-	return nil
-}
-
+// --- IMAGE RESIZING ---
 func resizeToWidth(src image.Image, targetWidth int) image.Image {
     bounds := src.Bounds()
     w := bounds.Dx()
     h := bounds.Dy()
 
-    // ESC/POS standard width is normally 384px
     scale := float64(targetWidth) / float64(w)
     newHeight := int(float64(h) * scale)
 

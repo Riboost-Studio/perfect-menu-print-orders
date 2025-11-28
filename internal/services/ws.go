@@ -81,7 +81,11 @@ func handleConnection(ctx context.Context, conn *websocket.Conn, p model.Printer
 
 		case model.MessageTypePing:
 			log.Printf("[%s] Received ping, sending pong...", p.Name)
-			conn.WriteJSON(model.WSMessage{Type: model.MessageTypePong, AgentKey: p.AgentKey})
+			pongMsg := model.WSMessageTypePong{
+				Type:      model.MessageTypePong,
+				Timestamp: time.Now().Unix(),
+			}
+			conn.WriteJSON(pongMsg)
 
 		case model.MessageTypeNewOrder:
 			log.Printf("[%s] Received print order...", p.Name)

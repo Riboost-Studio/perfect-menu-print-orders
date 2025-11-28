@@ -30,3 +30,8 @@ type WSMessageTypePrintFailed struct {
 	OrderID  int         `json:"order_id"`
 	Error    string      `json:"error"`
 }
+
+type WSMessageTypePong struct {
+	Type      MessageType `json:"type"`
+	Timestamp int64       `json:"timestamp"`
+}

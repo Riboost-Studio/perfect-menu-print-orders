@@ -69,6 +69,7 @@ func DiscoverPrinters(config model.Config) []model.Printer {
 				IsEnabled:    true,
 				TenantID:     config.TenantID,
 				RestaurantID: config.RestaurantID,
+				Type:         model.PrinterTypeThermal,
 			}
 
 			fmt.Print("  Name (e.g., Kitchen): ")
@@ -128,7 +129,7 @@ func RegisterPrinterOnServer(ctx context.Context, p *model.Printer, apiKey strin
 	return fmt.Errorf("no agent_key found in response")
 }
 
-func GetPrintersFromServer(ctx context.Context/*, p *model.Printer*/, apiKey string) ([]model.Printer, error) {
+func GetPrintersFromServer(ctx context.Context /*, p *model.Printer*/, apiKey string) ([]model.Printer, error) {
 	apiURL := ctx.Value(model.ContextAPIURL).(string) + "/api/printers"
 
 	req, err := http.NewRequest("GET", apiURL, nil)
@@ -178,5 +179,3 @@ func GetPrintersFromServer(ctx context.Context/*, p *model.Printer*/, apiKey str
 
 	return nil, fmt.Errorf("no agent_key found in response")
 }
-
-

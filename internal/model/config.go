@@ -2,6 +2,13 @@ package model
 
 // --- Configuration Structures ---
 
+// Printer type constants
+const (
+	PrinterTypeThermal = "thermal"
+	PrinterTypeInkjet  = "inkjet"
+	PrinterTypeLaser   = "laser"
+)
+
 type Config struct {
 	AppVersion   string `json:"appVersion"`
 	APIKey       string `json:"apiKey"`

@@ -24,13 +24,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Printer type constants
-const (
-	PrinterTypeThermal = "thermal"
-	PrinterTypeInkjet  = "inkjet"
-	PrinterTypeLaser   = "laser"
-)
-
 // --- WebSocket Agent Logic ---
 
 func RunAgent(ctx context.Context, p model.Printer, config model.Config) {
@@ -245,10 +238,10 @@ func sendFileToPrinter(p model.Printer, filePath string) error {
 	printerType := strings.ToLower(strings.TrimSpace(p.Type))
 	
 	switch printerType {
-	case PrinterTypeThermal:
+	case model.PrinterTypeThermal:
 		return sendToThermalPrinter(p, filePath)
 	
-	case PrinterTypeInkjet, PrinterTypeLaser:
+	case model.PrinterTypeInkjet, model.PrinterTypeLaser:
 		return sendToSystemPrinter(p, filePath)
 	
 	case "":

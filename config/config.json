@@ -1,8 +1,8 @@
 {
   "appVersion": "1.0.0",
-  "apiKey": "5b9a9740-7f88-4304-a3da-126de8ac1378",
-  "tenantId": 1,
-  "restaurantId": 1,
-  "apiUrl": "http://api.localhost",
-  "wsUrl": "ws://ws.localhost/agent"
+  "apiKey": "ak_d0c67fd82bdec0b8456f8a81c2111ecad88ef37e9872b67e2a7778872f205b34",
+  "tenantId": 3,
+  "restaurantId": 52,
+  "apiUrl": "https://api.perfect-menu.it",
+  "wsUrl": "wss://ws.perfect-menu.it/agent"
 }

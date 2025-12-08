@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Receipt Printer - Golden Palace",
+    "ip": "192.168.1.101",
+    "port": 9100,
+    "description": "Customer receipt printer for Golden Palace restaurant",
+    "isEnabled": true,
+    "tenantId": 1,
+    "restaurantId": 1,
+    "agent_key": "954b7074-e85c-4498-81ba-1f4bf73df0ca",
+    "type": "thermal",
+    "size": 576
+  },
+  {
+    "name": "Kitchen Printer - Golden Palace",
+    "ip": "192.168.1.100",
+    "port": 9100,
+    "description": "Main kitchen printer for Golden Palace restaurant",
+    "isEnabled": true,
+    "tenantId": 1,
+    "restaurantId": 1,
+    "agent_key": "27e33055-ab40-49b7-9ab5-aca01e5192e7",
+    "type": "thermal",
+    "size": 576
+  }
+]

@@ -271,7 +271,7 @@ func sendToThermalPrinter(p model.Printer, filePath string) error {
 	}
 
 	// Resize to thermal printer width (384px standard)
-	img = resizeToWidth(img, 384)
+	img = resizeToWidth(img, p.Size)
 
 	// Convert to ESC/POS raster
 	escposData, err := convertImageToESCPOS(img)

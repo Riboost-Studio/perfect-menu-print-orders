@@ -133,6 +133,9 @@ func SavePrinters(printersFile string, printers []model.Printer) error {
 	// Create a map of existing printers for efficient lookup
 	existingPrintersMap := make(map[string]model.Printer)
 	for _, printer := range existingPrinters {
+		if printer.Size == 0 {
+			printer.Size = 576 // Default size for backward compatibility
+		}
 		// Use IP as the unique identifier for printers
 		existingPrintersMap[printer.IP] = printer
 	}
@@ -140,6 +143,9 @@ func SavePrinters(printersFile string, printers []model.Printer) error {
 	// Add new printers that don't exist
 	for _, printer := range printers {
 		if _, exists := existingPrintersMap[printer.IP]; !exists {
+			if printer.Size == 0 {
+				printer.Size = 576 // Default size for backward compatibility
+			}
 			existingPrinters = append(existingPrinters, printer)
 		}
 	}

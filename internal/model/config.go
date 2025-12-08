@@ -27,5 +27,6 @@ type Printer struct {
 	TenantID     int    `json:"tenantId"`
 	RestaurantID int    `json:"restaurantId,omitempty"`
 	AgentKey     string `json:"agent_key,omitempty"` // Assigned by server
-	Type		 string `json:"type,omitempty"`
+	Type         string `json:"type,omitempty"`
+	Size         int    `json:"size,omitempty"`
 }

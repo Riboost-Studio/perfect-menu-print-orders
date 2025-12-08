@@ -70,6 +70,7 @@ func DiscoverPrinters(config model.Config) []model.Printer {
 				TenantID:     config.TenantID,
 				RestaurantID: config.RestaurantID,
 				Type:         model.PrinterTypeThermal,
+				Size:         576,
 			}
 
 			fmt.Print("  Name (e.g., Kitchen): ")

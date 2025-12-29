@@ -1,3 +1,4 @@
 printer_config.json
 bin
+config/*
 tmp

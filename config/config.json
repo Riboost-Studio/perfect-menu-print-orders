@@ -1,8 +1,0 @@
-{
-  "appVersion": "1.0.0",
-  "apiKey": "2cce5e80-a881-4786-9fe5-01593cc72785",
-  "tenantId": 1,
-  "restaurantId": 1,
-  "apiUrl": "http://api.localhost",
-  "wsUrl": "ws://ws.localhost/agent"
-}

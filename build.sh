@@ -6,15 +6,15 @@ rm ./bin/*
 
 # Per Linux
 GOOS=linux GOARCH=amd64 go build -o "./bin/perfect-menu_print_orders-amd64-linux" "./cmd/"
-tar -czf "./bin/perfect-menu_print_orders-amd64-linux.tar.gz" -C ./bin perfect-menu_print_orders-amd64-linux -C .. templates/
+tar -czf "./bin/perfect-menu_print_orders-amd64-linux.tar.gz" -C ./bin perfect-menu_print_orders-amd64-linux -C .. templates/ scripts/setup-cron-linux.sh
 shasum -a 256 "./bin/perfect-menu_print_orders-amd64-linux.tar.gz" > "./bin/perfect-menu_print_orders-amd64-linux.tar.gz.sha256"
 
 # For Raspberry Pi (ARM)
 GOOS=linux GOARCH=arm64 go build -o "./bin/perfect-menu_print_orders-arm64-linux" "./cmd/"
-tar -czf "./bin/perfect-menu_print_orders-arm64-linux.tar.gz" -C ./bin perfect-menu_print_orders-arm64-linux -C .. templates/
+tar -czf "./bin/perfect-menu_print_orders-arm64-linux.tar.gz" -C ./bin perfect-menu_print_orders-arm64-linux -C .. templates/ scripts/setup-cron-arm64-linux.sh
 shasum -a 256 "./bin/perfect-menu_print_orders-arm64-linux.tar.gz" > "./bin/perfect-menu_print_orders-arm64-linux.tar.gz.sha256" 
 
 # Per macOS
 GOOS=darwin GOARCH=amd64 go build -o "./bin/perfect-menu_print_orders-amd64-macos" "./cmd/"
-tar -czf "./bin/perfect-menu_print_orders-amd64-macos.tar.gz" -C ./bin perfect-menu_print_orders-amd64-macos -C .. templates/
+tar -czf "./bin/perfect-menu_print_orders-amd64-macos.tar.gz" -C ./bin perfect-menu_print_orders-amd64-macos -C .. templates/ scripts/setup-cron-macos.sh
 shasum -a 256 "./bin/perfect-menu_print_orders-amd64-macos.tar.gz" > "./bin/perfect-menu_print_orders-amd64-macos.tar.gz.sha256"
